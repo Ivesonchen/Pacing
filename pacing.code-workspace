@@ -1,0 +1,22 @@
+{
+  "folders": [
+    {
+      "name": "Pacing",
+      "path": "."
+    },
+    {
+      "name": "Jarvis (reference)",
+      "path": "../Jarvis"
+    }
+  ],
+  "settings": {
+    "git.ignoredRepositories": [
+      "../Jarvis"
+    ],
+    "files.exclude": {
+      "**/node_modules": true,
+      "**/out": true,
+      "**/dist": true
+    }
+  }
+}

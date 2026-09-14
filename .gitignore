@@ -1,0 +1,74 @@
+# Dependencies
+node_modules/
+
+# Electron/Vite build and packaging output
+out/
+dist/
+release/
+*.blockmap
+builder-debug.yml
+builder-effective-config.yaml
+
+# Native module build output
+build/Release/
+*.node
+
+# Test and coverage output
+coverage/
+.nyc_output/
+test-results/
+playwright-report/
+
+# Tool caches and temporary files
+.eslintcache
+.vite/
+.cache/
+.parcel-cache/
+.turbo/
+.temp/
+.tmp/
+tmp/
+temp/
+*.tsbuildinfo
+
+# Logs
+logs/
+*.log
+*.log.*
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Local environment configuration
+.env
+.env.*
+!.env.example
+!.env.*.example
+*.local
+
+# Code signing credentials and private keys
+*.pfx
+*.p12
+*.pem
+*.key
+*.cer
+*.crt
+
+# Operating system metadata
+.DS_Store
+.AppleDouble
+.LSOverride
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Editor-local files (shared VS Code configuration remains tracked)
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+*~
