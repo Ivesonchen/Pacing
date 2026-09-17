@@ -1,6 +1,6 @@
 :root {
-  color: #eaf1f8;
-  background: #071017;
+  color: #111827;
+  background: #f7f8fb;
   font-family: Inter, "Segoe UI", sans-serif;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
@@ -9,7 +9,6 @@
 *,
 *::before,
 *::after {
-  box-sizing: border-box;
   box-sizing: border-box;
 }
 
@@ -22,4 +21,8 @@ body {
 
 button {
   font: inherit;
+}
+
+#root {
+  min-height: 100vh;
 }

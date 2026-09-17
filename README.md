@@ -1,6 +1,6 @@
 # Pacing
 
-A Windows desktop app built with Electron, Vite, and React, with GitHub Copilot authentication and model discovery.
+A Windows desktop app built with Electron, Vite, and React, with GitHub Copilot authentication and model discovery. The renderer implements the **Pacing AI Task Planner** designs imported from Google Stitch.
 
 ## Prerequisites
 
@@ -51,7 +51,8 @@ Pacing uses the official `@github/copilot` CLI for device authorization and `@gi
 - `src/main/copilot-service.js` owns the long-lived Copilot SDK client, device-flow process, sign-out, and model discovery.
 - `src/main/settings-store.js` owns validated, atomic preference persistence.
 - `src/preload` exposes the small, context-isolated API available to React.
-- `src/renderer` contains the Vite-powered React interface.
+- `src/renderer` contains the Vite-powered React interface, including Goal Chat, Calendar Planner, and Settings screens.
+- Mantine supplies reusable application controls and layout primitives, Lucide supplies interface icons, and React Icons supplies brand marks.
 - `electron-builder.yml` configures Windows installer packaging.
 
 The renderer has no direct Node.js access. Keep `contextIsolation` and the Chromium sandbox enabled, and add native capabilities through narrow preload methods rather than exposing Electron APIs wholesale.
