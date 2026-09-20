@@ -1,5 +1,5 @@
 import { ActionIcon, Avatar, Breadcrumbs, Group, Kbd, Text, TextInput } from '@mantine/core'
-import { Bell, Search } from 'lucide-react'
+import { Bell, Search, User } from 'lucide-react'
 import PropTypes from 'prop-types'
 
 const titles = {
@@ -8,7 +8,8 @@ const titles = {
   settings: 'Settings'
 }
 
-function WorkspaceHeader({ activeView }) {
+function WorkspaceHeader({ activeView, account }) {
+  const initials = account.username ? account.username.slice(0, 2).toUpperCase() : ''
   return (
     <header className="workspace-header">
       <Breadcrumbs separator="/" className="workspace-breadcrumbs">
@@ -30,14 +31,20 @@ function WorkspaceHeader({ activeView }) {
         <ActionIcon variant="subtle" color="gray" aria-label="Notifications">
           <Bell size={16} />
         </ActionIcon>
-        <Avatar size={27} radius="xl" color="dark">AV</Avatar>
+        <Avatar size={27} radius="xl" color={account.authenticated ? 'dark' : 'gray'}>
+          {initials || <User size={13} />}
+        </Avatar>
       </Group>
     </header>
   )
 }
 
 WorkspaceHeader.propTypes = {
-  activeView: PropTypes.oneOf(['chat', 'calendar', 'settings']).isRequired
+  activeView: PropTypes.oneOf(['chat', 'calendar', 'settings']).isRequired,
+  account: PropTypes.shape({
+    authenticated: PropTypes.bool,
+    username: PropTypes.string
+  }).isRequired
 }
 
 export default WorkspaceHeader

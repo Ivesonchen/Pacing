@@ -6,18 +6,63 @@ import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { app } from 'electron'
 import { CopilotClient, RuntimeConnection } from '@github/copilot-sdk'
+import { getSettings, onSettingsChanged } from './settings-store'
+import { appendMessages, getConversation, setCopilotSessionId } from './conversation-store'
 
 const execFileAsync = promisify(execFile)
 const requireFromHere = createRequire(import.meta.url)
 const listeners = new Set()
 const cancelledLoginProcesses = new WeakSet()
 const MAX_LOGIN_OUTPUT = 64 * 1024
+const MAX_PROMPT_LENGTH = 16_000
 const CODE_TIMEOUT_MS = 30_000
 const LOGIN_TIMEOUT_MS = 5 * 60_000
+const RESPONSE_TIMEOUT_MS = 3 * 60_000
+const SYSTEM_PREAMBLE = [
+  'You are Pacing Copilot, a planning assistant inside a desktop app.',
+  'Help the user turn goals and deadlines into realistic, sustainable focus blocks.',
+  'Ask for a deadline when one is missing, keep replies concise, and favour plain prose.',
+  'You have no file, terminal, or repository access, so never claim to inspect or change files.',
+  '',
+  'Whenever you propose or revise a schedule, end your reply with a fenced code block tagged',
+  '`pacing-plan` containing only JSON in this exact shape:',
+  '',
+  '```pacing-plan',
+  '{',
+  '  "title": "Short plan name",',
+  '  "deadline": "YYYY-MM-DDTHH:mm",',
+  '  "blocks": [',
+  '    {',
+  '      "title": "Focus block name",',
+  '      "date": "YYYY-MM-DD",',
+  '      "start": "HH:mm",',
+  '      "end": "HH:mm",',
+  '      "priority": "critical|high|medium|low|buffer",',
+  '      "notes": "One short line of context"',
+  '    }',
+  '  ]',
+  '}',
+  '```',
+  '',
+  'Use real calendar dates (today is supplied with each request). Use 24-hour times.',
+  'Make each block title specific about what the session covers rather than a generic label,',
+  'and put the concrete per-session detail in `notes`.',
+  'When the user adds or refines requirements, re-emit the whole plan with those details applied',
+  'to every affected block — never reply with an unchanged copy of the previous plan.',
+  'Keep the prose above the block brief — the app renders the JSON as an editable schedule,',
+  'so do not repeat the full block list as bullet points or a markdown table.',
+  'Omit the block entirely when the user is only asking a question.'
+].join('\n')
 
 let client
 let clientPromise
 let loginProcess
+let chatSession
+let chatSessionKey = ''
+let chatConversationId = ''
+let chatSessionPromise
+let activeTurn
+let sessionSeeded = false
 
 function copilotHome() {
   return join(app.getPath('userData'), 'copilot')
@@ -98,6 +143,7 @@ async function resetClient() {
   const current = client
   client = undefined
   clientPromise = undefined
+  await closeChatSession()
   if (!current) return
 
   try {
@@ -115,6 +161,11 @@ export function onAuthEvent(listener) {
   listeners.add(listener)
   return () => listeners.delete(listener)
 }
+
+// A new model or reasoning effort needs a fresh session to take effect.
+onSettingsChanged(() => {
+  void closeChatSession()
+})
 
 export async function checkAuth() {
   try {
@@ -147,13 +198,148 @@ export async function listModels() {
     }))
 }
 
+export async function closeChatSession() {
+  const current = chatSession
+  chatSession = undefined
+  chatSessionKey = ''
+  chatConversationId = ''
+  chatSessionPromise = undefined
+  activeTurn = undefined
+  sessionSeeded = false
+  if (!current) return
+
+  try {
+    await current.disconnect()
+  } catch (error) {
+    console.warn('Unable to disconnect the Copilot chat session cleanly.', error)
+  }
+}
+
+function sessionConfig() {
+  const { ai } = getSettings()
+  const config = {
+    clientName: 'Pacing',
+    // Pacing is a planning assistant, not a coding agent: no tools, no repo instructions.
+    availableTools: [],
+    skipCustomInstructions: true,
+    onPermissionRequest: () => ({ kind: 'reject' })
+  }
+  if (ai.defaultModel) config.model = ai.defaultModel
+  if (ai.reasoningEffort && ai.reasoningEffort !== 'default') {
+    config.reasoningEffort = ai.reasoningEffort
+  }
+  return config
+}
+
+async function ensureChatSession(conversationId) {
+  const { ai } = getSettings()
+  const key = `${ai.defaultModel}|${ai.reasoningEffort}`
+  const matches = chatConversationId === conversationId && chatSessionKey === key
+
+  if (chatSession && matches) return chatSession
+  if (chatSessionPromise && matches) return chatSessionPromise
+  await closeChatSession()
+
+  chatSessionKey = key
+  chatConversationId = conversationId
+  chatSessionPromise = (async () => {
+    const client = await ensureClient()
+    const config = sessionConfig()
+    const conversation = getConversation(conversationId)
+
+    // Resuming keeps the model's own context; a fresh session must be re-seeded
+    // with the preamble.
+    if (conversation.copilotSessionId) {
+      try {
+        const resumed = await client.resumeSession(conversation.copilotSessionId, config)
+        chatSession = resumed
+        sessionSeeded = true
+        return resumed
+      } catch (error) {
+        console.warn('Unable to resume the previous Copilot session; starting a new one.', error)
+      }
+    }
+
+    const session = await client.createSession(config)
+    chatSession = session
+    sessionSeeded = false
+    setCopilotSessionId(conversationId, session.sessionId)
+    return session
+  })()
+
+  try {
+    return await chatSessionPromise
+  } catch (error) {
+    chatSessionKey = ''
+    chatConversationId = ''
+    throw error
+  } finally {
+    chatSessionPromise = undefined
+  }
+}
+
+export async function sendChatMessage({ prompt, requestId, conversationId }, onEvent) {
+  const text = typeof prompt === 'string' ? prompt.trim() : ''
+  if (!text) throw new Error('Enter a message before sending.')
+  if (text.length > MAX_PROMPT_LENGTH) throw new Error('That message is too long to send.')
+
+  const status = await checkAuth()
+  if (!status.authenticated) throw new Error('Sign in to GitHub Copilot before chatting.')
+  if (activeTurn) throw new Error('Pacing is still answering the previous message.')
+
+  const session = await ensureChatSession(conversationId)
+  const needsPreamble = !sessionSeeded
+  sessionSeeded = true
+
+  let content = ''
+  let failure
+  const unsubscribe = session.on((event) => {
+    if (event.type === 'assistant.message_delta') {
+      const delta = event.data?.deltaContent || ''
+      if (!delta) return
+      content += delta
+      onEvent({ type: 'delta', requestId, delta, content })
+    } else if (event.type === 'assistant.message') {
+      if (event.data?.content) {
+        content = event.data.content
+        onEvent({ type: 'delta', requestId, delta: '', content })
+      }
+    } else if (event.type === 'session.error') {
+      failure = event.data?.message || 'GitHub Copilot reported an error.'
+    }
+  })
+
+  activeTurn = requestId
+  try {
+    const today = new Date().toISOString().slice(0, 10)
+    const composed = needsPreamble
+      ? `${SYSTEM_PREAMBLE}\n\nToday is ${today}.\n\n${text}`
+      : `Today is ${today}.\n\n${text}`
+    const result = await session.sendAndWait({ prompt: composed }, RESPONSE_TIMEOUT_MS)
+    const finalContent = result?.data?.content || content
+    if (!finalContent) throw new Error(failure || 'GitHub Copilot returned an empty response.')
+
+    const timestamp = new Date().toISOString()
+    const conversation = appendMessages(conversationId, [
+      { id: `user-${requestId}`, role: 'user', text, timestamp },
+      { id: requestId, role: 'assistant', text: finalContent, timestamp }
+    ])
+
+    return { content: finalContent, title: conversation.title }
+  } catch (error) {
+    throw new Error(failure || (error instanceof Error ? error.message : String(error)))
+  } finally {
+    activeTurn = undefined
+    unsubscribe()
+  }
+}
+
 export function cancelDeviceFlow() {
   if (!loginProcess) return
   cancelledLoginProcesses.add(loginProcess)
   loginProcess.kill()
   loginProcess = undefined
 }
-
 export function startDeviceFlow() {
   cancelDeviceFlow()
 

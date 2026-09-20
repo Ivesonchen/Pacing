@@ -36,6 +36,18 @@ const api = {
   models: {
     list: () => unwrap(ipcRenderer.invoke('models:list'))
   },
+  chat: {
+    send: (request) => unwrap(ipcRenderer.invoke('chat:send', request)),
+    onEvent: (callback) => subscribe('chat:event', callback)
+  },
+  history: {
+    list: () => unwrap(ipcRenderer.invoke('history:list')),
+    get: (id) => unwrap(ipcRenderer.invoke('history:get', id)),
+    create: () => unwrap(ipcRenderer.invoke('history:create')),
+    remove: (id) => unwrap(ipcRenderer.invoke('history:delete', id)),
+    rename: (id, title) => unwrap(ipcRenderer.invoke('history:rename', id, title)),
+    onChanged: (callback) => subscribe('history:changed', callback)
+  },
   settings: {
     get: () => unwrap(ipcRenderer.invoke('settings:get')),
     update: (patch) => unwrap(ipcRenderer.invoke('settings:update', patch)),

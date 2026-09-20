@@ -2,8 +2,10 @@ import { BrowserWindow, ipcMain, shell } from 'electron'
 import {
   cancelDeviceFlow,
   checkAuth,
+  closeChatSession,
   listModels,
   onAuthEvent,
+  sendChatMessage,
   signOut,
   startDeviceFlow
 } from './copilot-service'
@@ -13,6 +15,14 @@ import {
   onSettingsChanged,
   updateSettings
 } from './settings-store'
+import {
+  createConversation,
+  deleteConversation,
+  getConversation,
+  listConversations,
+  onConversationsChanged,
+  renameConversation
+} from './conversation-store'
 
 const allowedExternalUrls = new Set(['https://github.com/login/device'])
 
@@ -55,6 +65,28 @@ export function registerIpcHandlers() {
   })
   handle('models:list', async () => ({ models: await listModels() }))
 
+  handle('chat:send', async (request) => {
+    const { prompt, requestId, conversationId } = request || {}
+    if (typeof requestId !== 'string' || !requestId) throw new Error('A request id is required.')
+    if (typeof conversationId !== 'string' || !conversationId) {
+      throw new Error('A conversation id is required.')
+    }
+    return sendChatMessage({ prompt, requestId, conversationId }, (event) =>
+      broadcast('chat:event', event)
+    )
+  })
+  handle('history:list', async () => ({ conversations: listConversations() }))
+  handle('history:get', async (id) => ({ conversation: getConversation(id) }))
+  handle('history:create', async () => ({ conversation: createConversation() }))
+  handle('history:delete', async (id) => {
+    deleteConversation(id)
+    await closeChatSession()
+    return {}
+  })
+  handle('history:rename', async (id, title) => ({
+    conversation: renameConversation(id, title)
+  }))
+
   handle('settings:get', async () => ({ settings: getSettings() }))
   handle('settings:update', async (patch) => ({ settings: updateSettings(patch) }))
   handle('settings:reveal', async () => {
@@ -72,4 +104,5 @@ export function registerIpcHandlers() {
   })
 
   onSettingsChanged((settings) => broadcast('settings:changed', { settings }))
+  onConversationsChanged((conversations) => broadcast('history:changed', { conversations }))
 }

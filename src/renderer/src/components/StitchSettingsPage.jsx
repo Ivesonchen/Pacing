@@ -39,6 +39,17 @@ function StitchSettingsPage() {
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState('')
   const [message, setMessage] = useState(null)
+  const [latency, setLatency] = useState(null)
+
+  const measureLatency = useCallback(async () => {
+    const started = performance.now()
+    try {
+      await window.api.ping()
+      setLatency(Math.round(performance.now() - started))
+    } catch {
+      setLatency(null)
+    }
+  }, [])
 
   const loadModels = useCallback(async () => {
     setBusy('models')
@@ -54,11 +65,12 @@ function StitchSettingsPage() {
   }, [])
 
   const refreshAuth = useCallback(async () => {
+    await measureLatency()
     const result = await window.api.auth.check()
     setAuth(result.status)
     if (result.status.authenticated) await loadModels()
     else setModels([])
-  }, [loadModels])
+  }, [loadModels, measureLatency])
 
   useEffect(() => {
     let active = true
@@ -67,6 +79,7 @@ function StitchSettingsPage() {
         if (!active) return
         setAuth(authResult.status)
         setSettings(settingsResult.settings)
+        await measureLatency()
         if (authResult.status.authenticated) await loadModels()
       })
       .catch((error) => active && setMessage({ type: 'error', text: error.message }))
@@ -97,7 +110,7 @@ function StitchSettingsPage() {
       offSettings()
       void window.api.auth.cancelDeviceFlow()
     }
-  }, [loadModels, refreshAuth])
+  }, [loadModels, measureLatency, refreshAuth])
 
   const modelOptions = useMemo(
     () => [{ value: '', label: 'Automatic / Copilot default' }, ...models.map((model) => ({ value: model.id, label: model.name }))],
@@ -195,10 +208,10 @@ function StitchSettingsPage() {
               <Paper className="connected-account" radius="md" withBorder p="md" mt="md">
                 <Group justify="space-between">
                   <Group>
-                    <Avatar color="dark" radius="xl">{auth.username.slice(0, 2).toUpperCase() || 'GH'}</Avatar>
+                    <Avatar color="dark" radius="xl">{auth.username.slice(0, 2).toUpperCase()}</Avatar>
                     <Box>
-                      <Text size="sm" fw={650}>{auth.username || 'GitHub account'}</Text>
-                      <Text size="xs" c="dimmed">@{auth.username || 'github-user'}</Text>
+                      <Text size="sm" fw={650}>{auth.username}</Text>
+                      <Text size="xs" c="dimmed">{auth.host}</Text>
                     </Box>
                   </Group>
                   <Box ta="right">
@@ -278,16 +291,25 @@ function StitchSettingsPage() {
           </Group>
           <SimpleGrid cols={{ base: 1, sm: 3 }} spacing="sm">
             <Paper className="diagnostic-tile" p="md" radius="md">
-              <Group justify="space-between"><Text size="9px" c="dimmed">ROUNDTRIP LATENCY</Text><Zap size={13} color="#22c55e" /></Group>
-              <Text fw={700} mt={6}>240 ms <Text component="span" size="10px" c="green">Optimal</Text></Text>
+              <Group justify="space-between"><Text size="9px" c="dimmed">ROUNDTRIP LATENCY</Text><Zap size={13} color={latency === null ? '#9ca3af' : '#22c55e'} /></Group>
+              <Text fw={700} mt={6}>
+                {latency === null ? '—' : `${latency} ms`}{' '}
+                <Text component="span" size="10px" c="dimmed">{latency === null ? 'Not measured' : 'Desktop bridge'}</Text>
+              </Text>
             </Paper>
             <Paper className="diagnostic-tile" p="md" radius="md">
-              <Group justify="space-between"><Text size="9px" c="dimmed">DAILY TOKEN BUDGET</Text><ShieldCheck size={13} color="#3b82f6" /></Group>
-              <Text fw={700} mt={6}>Unlimited <Text component="span" size="10px" c="blue">Copilot Plan</Text></Text>
+              <Group justify="space-between"><Text size="9px" c="dimmed">CONNECTION STATUS</Text><ShieldCheck size={13} color={auth.authenticated ? '#3b82f6' : '#9ca3af'} /></Group>
+              <Text fw={700} mt={6}>
+                {auth.authenticated ? 'Connected' : 'Disconnected'}{' '}
+                <Text component="span" size="10px" c="dimmed">{auth.host || '—'}</Text>
+              </Text>
             </Paper>
             <Paper className="diagnostic-tile" p="md" radius="md">
-              <Group justify="space-between"><Text size="9px" c="dimmed">CONTEXT WINDOW SIZE</Text><Cloud size={13} color="#3b82f6" /></Group>
-              <Text fw={700} mt={6}>Model-based <Text component="span" size="10px" c="dimmed">Synced</Text></Text>
+              <Group justify="space-between"><Text size="9px" c="dimmed">ACTIVE MODEL</Text><Cloud size={13} color={selectedModel ? '#3b82f6' : '#9ca3af'} /></Group>
+              <Text fw={700} mt={6}>
+                {selectedModel?.name || 'Copilot default'}{' '}
+                <Text component="span" size="10px" c="dimmed">{models.length ? `${models.length} available` : 'Not loaded'}</Text>
+              </Text>
             </Paper>
           </SimpleGrid>
         </Card>
