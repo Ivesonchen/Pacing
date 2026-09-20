@@ -98,9 +98,17 @@
 .hour-line { position: absolute; left: -6px; right: -6px; height: 1px; background: #eceef1; }
 .now-line { position: absolute; left: -6px; right: -6px; height: 2px; background: #ef4444; z-index: 3; }
 .now-dot { position: absolute; left: -3px; top: -3px; width: 8px; height: 8px; border-radius: 50%; background: #ef4444; }
-.timeline-block { position: absolute; display: flex; flex-direction: column; overflow: hidden; padding: 4px 6px; border: 1px solid #bfdbfe; border-radius: 7px; background: #f3f7ff; z-index: 2; cursor: default; transition: box-shadow .15s, transform .15s; }
+.timeline-block { position: absolute; display: flex; flex-direction: column; overflow: hidden; padding: 4px 6px; border: 1px solid #bfdbfe; border-radius: 7px; background: #f3f7ff; z-index: 2; cursor: grab; user-select: none; touch-action: none; transition: box-shadow .15s, transform .15s; }
 .timeline-block:hover { box-shadow: 0 4px 12px rgba(15, 23, 42, .12); transform: translateY(-1px); z-index: 4; }
+.timeline-block:focus-visible { outline: 2px solid #2563eb; outline-offset: 1px; }
+.timeline-block.dragging { cursor: grabbing; opacity: .9; box-shadow: 0 8px 20px rgba(15, 23, 42, .18); transform: none; z-index: 6; }
 .timeline-block.compact { justify-content: center; padding: 0 6px; }
+.resize-handle { position: absolute; left: 0; right: 0; height: 6px; cursor: ns-resize; z-index: 5; }
+.resize-handle.top { top: 0; }
+.resize-handle.bottom { bottom: 0; }
+.timeline-block:hover .resize-handle::after { content: ''; position: absolute; left: 50%; width: 18px; height: 2px; margin-left: -9px; border-radius: 1px; background: rgba(37, 99, 235, .5); }
+.timeline-block:hover .resize-handle.top::after { top: 1px; }
+.timeline-block:hover .resize-handle.bottom::after { bottom: 1px; }
 .timeline-block.red { border-color: #fecaca; background: #fff5f5; box-shadow: inset 3px 0 #ef4444; }
 .timeline-block.blue { border-color: #bfdbfe; background: #f3f7ff; box-shadow: inset 3px 0 #60a5fa; }
 .timeline-block.green { border-color: #bbf7d0; background: #f3fff7; box-shadow: inset 3px 0 #22c55e; }

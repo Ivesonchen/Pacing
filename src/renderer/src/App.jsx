@@ -43,6 +43,12 @@ function App() {
     setPlanHistory((history) => history.slice(0, -1))
   }
 
+  // Direct calendar edits are undoable through the same stack as inserts.
+  const updatePlan = (plan) => {
+    setPlanHistory((history) => [...history, appliedPlan].slice(-MAX_PLAN_HISTORY))
+    setAppliedPlan(plan)
+  }
+
   const page = {
     chat: (
       <GoalChatPage
@@ -58,6 +64,7 @@ function App() {
         onClearPlan={() => applyPlan(null)}
         onRevertPlan={revertPlan}
         canRevert={planHistory.length > 0}
+        onUpdatePlan={updatePlan}
       />
     ),
     settings: <StitchSettingsPage />

@@ -23,8 +23,9 @@ import {
   Undo2
 } from 'lucide-react'
 import PropTypes from 'prop-types'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { durationHours, formatHours, priorityColor, priorityTone } from '../lib/plan'
+import BlockEditorModal from './BlockEditorModal'
 
 const WEEKDAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri']
 const HOUR_HEIGHT = 56
@@ -32,10 +33,28 @@ const DEFAULT_DAY_START = 8
 const DEFAULT_DAY_END = 18
 const MIN_BLOCK_HEIGHT = 20
 const COMPACT_HEIGHT = 46
+const SNAP_MINUTES = 15
+const MIN_DURATION = 15
+const DRAG_THRESHOLD = 3
 
 function toMinutes(time) {
   const [hour, minute] = time.split(':').map(Number)
   return hour * 60 + minute
+}
+
+function toTime(minutes) {
+  const clamped = Math.max(0, Math.min(24 * 60, Math.round(minutes)))
+  return `${String(Math.floor(clamped / 60)).padStart(2, '0')}:${String(clamped % 60).padStart(2, '0')}`
+}
+
+function snap(minutes) {
+  return Math.round(minutes / SNAP_MINUTES) * SNAP_MINUTES
+}
+
+function shiftDate(date, days) {
+  const parsed = new Date(`${date}T00:00`)
+  parsed.setDate(parsed.getDate() + days)
+  return `${parsed.getFullYear()}-${String(parsed.getMonth() + 1).padStart(2, '0')}-${String(parsed.getDate()).padStart(2, '0')}`
 }
 
 function formatHour(hour) {
@@ -134,10 +153,25 @@ function formatRange(days) {
   return `${span}, ${friday.getFullYear()}`
 }
 
-function CalendarPlannerPage({ plan, onClearPlan, onRevertPlan, canRevert }) {
+function CalendarPlannerPage({ plan, onClearPlan, onRevertPlan, canRevert, onUpdatePlan }) {
   const blocks = useMemo(() => plan?.blocks || [], [plan])
   const [weekOffset, setWeekOffset] = useState(() => (blocks.length ? weekOffsetFor(blocks[0].date) : 0))
-  const days = useMemo(() => buildWeek(weekOffset, blocks), [weekOffset, blocks])
+  const [drag, setDrag] = useState(null)
+  const [editingId, setEditingId] = useState(null)
+  const gridRef = useRef(null)
+  const dragRef = useRef(null)
+
+  // The dragged block previews at its candidate time until the pointer is released.
+  const previewBlocks = useMemo(() => {
+    if (!drag) return blocks
+    return blocks.map((block) =>
+      block.id === drag.id
+        ? { ...block, date: drag.date, start: toTime(drag.start), end: toTime(drag.end) }
+        : block
+    )
+  }, [blocks, drag])
+
+  const days = useMemo(() => buildWeek(weekOffset, previewBlocks), [weekOffset, previewBlocks])
   const scheduledBlocks = days.reduce((total, day) => total + day.blocks.length, 0)
 
   const range = useMemo(() => hourWindow(days.flatMap((day) => day.blocks)), [days])
@@ -155,6 +189,131 @@ function CalendarPlannerPage({ plan, onClearPlan, onRevertPlan, canRevert }) {
 
   const nowOffset = (now.getHours() * 60 + now.getMinutes() - range.start * 60) * (HOUR_HEIGHT / 60)
   const nowVisible = nowOffset >= 0 && nowOffset <= timelineHeight
+
+  const updateBlock = (id, patch) => {
+    if (!plan) return
+    onUpdatePlan({
+      ...plan,
+      blocks: plan.blocks.map((block) => (block.id === id ? { ...block, ...patch } : block))
+    })
+  }
+
+  const deleteBlock = (id) => {
+    if (!plan) return
+    onUpdatePlan({ ...plan, blocks: plan.blocks.filter((block) => block.id !== id) })
+  }
+
+  const beginDrag = (event, block, mode) => {
+    if (event.button !== 0) return
+    event.preventDefault()
+    event.stopPropagation()
+    const next = {
+      id: block.id,
+      mode,
+      pointerX: event.clientX,
+      pointerY: event.clientY,
+      originStart: toMinutes(block.start),
+      originEnd: toMinutes(block.end),
+      originDate: block.date,
+      start: toMinutes(block.start),
+      end: toMinutes(block.end),
+      date: block.date,
+      moved: false
+    }
+    dragRef.current = next
+    setDrag(next)
+  }
+
+  useEffect(() => {
+    if (!drag) return undefined
+
+    const columnWidth = () => {
+      const column = gridRef.current?.querySelector('.day-column')
+      return column?.getBoundingClientRect().width || 1
+    }
+
+    const handleMove = (event) => {
+      const current = dragRef.current
+      if (!current) return
+
+      const deltaY = event.clientY - current.pointerY
+      const deltaX = event.clientX - current.pointerX
+      const moved =
+        current.moved || Math.abs(deltaY) > DRAG_THRESHOLD || Math.abs(deltaX) > DRAG_THRESHOLD
+      const deltaMinutes = snap(deltaY / (HOUR_HEIGHT / 60))
+
+      let next
+      if (current.mode === 'resize-start') {
+        next = {
+          ...current,
+          moved,
+          start: Math.max(
+            0,
+            Math.min(current.originStart + deltaMinutes, current.originEnd - MIN_DURATION)
+          )
+        }
+      } else if (current.mode === 'resize-end') {
+        next = {
+          ...current,
+          moved,
+          end: Math.min(
+            24 * 60,
+            Math.max(current.originEnd + deltaMinutes, current.originStart + MIN_DURATION)
+          )
+        }
+      } else {
+        const duration = current.originEnd - current.originStart
+        const start = Math.max(0, Math.min(current.originStart + deltaMinutes, 24 * 60 - duration))
+        const dayShift = Math.round(deltaX / columnWidth())
+        next = {
+          ...current,
+          moved,
+          start,
+          end: start + duration,
+          date: dayShift ? shiftDate(current.originDate, dayShift) : current.originDate
+        }
+      }
+
+      dragRef.current = next
+      setDrag(next)
+    }
+
+    const handleUp = () => {
+      const current = dragRef.current
+      dragRef.current = null
+      setDrag(null)
+      if (!current) return
+
+      if (!current.moved) {
+        setEditingId(current.id)
+        return
+      }
+
+      const patch = {
+        start: toTime(current.start),
+        end: toTime(current.end),
+        date: current.date
+      }
+      const changed =
+        patch.start !== toTime(current.originStart) ||
+        patch.end !== toTime(current.originEnd) ||
+        patch.date !== current.originDate
+      if (changed) updateBlock(current.id, patch)
+    }
+
+    window.addEventListener('pointermove', handleMove)
+    window.addEventListener('pointerup', handleUp)
+    window.addEventListener('pointercancel', handleUp)
+    return () => {
+      window.removeEventListener('pointermove', handleMove)
+      window.removeEventListener('pointerup', handleUp)
+      window.removeEventListener('pointercancel', handleUp)
+    }
+    // Re-binding per gesture keeps updateBlock's captured plan current.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [drag?.id, drag?.mode, plan])
+
+  const editingBlock = blocks.find((block) => block.id === editingId) || null
 
   return (
     <div className="calendar-page">
@@ -223,7 +382,7 @@ function CalendarPlannerPage({ plan, onClearPlan, onRevertPlan, canRevert }) {
           disabled={!canRevert}
           onClick={onRevertPlan}
         >
-          Revert last insert
+          Undo last change
         </Button>
       </Card>
 
@@ -244,7 +403,7 @@ function CalendarPlannerPage({ plan, onClearPlan, onRevertPlan, canRevert }) {
           <SegmentedControl size="xs" data={['Day', 'Week', 'Split']} defaultValue="Week" />
         </Group>
 
-        <div className="week-grid">
+        <div className="week-grid" ref={gridRef}>
           <div className="time-gutter" style={{ height: timelineHeight }}>
             {hours.map((hour) => (
               <div className="hour-label" key={hour} style={{ height: HOUR_HEIGHT }}>
@@ -277,10 +436,13 @@ function CalendarPlannerPage({ plan, onClearPlan, onRevertPlan, canRevert }) {
                   const top = (start - range.start * 60) * (HOUR_HEIGHT / 60)
                   const height = Math.max((end - start) * (HOUR_HEIGHT / 60), MIN_BLOCK_HEIGHT)
                   const compact = height < COMPACT_HEIGHT
+                  const dragging = drag?.id === block.id && drag.moved
                   return (
                     <div
                       key={block.id}
-                      className={`timeline-block ${priorityTone(block.priority)}${compact ? ' compact' : ''}`}
+                      role="button"
+                      tabIndex={0}
+                      className={`timeline-block ${priorityTone(block.priority)}${compact ? ' compact' : ''}${dragging ? ' dragging' : ''}`}
                       style={{
                         top,
                         height,
@@ -288,7 +450,18 @@ function CalendarPlannerPage({ plan, onClearPlan, onRevertPlan, canRevert }) {
                         width: `calc(${(1 / lanes) * 100}% - 4px)`
                       }}
                       title={`${block.start} – ${block.end} · ${block.title}${block.notes ? ` · ${block.notes}` : ''}`}
+                      onPointerDown={(event) => beginDrag(event, block, 'move')}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter' || event.key === ' ') {
+                          event.preventDefault()
+                          setEditingId(block.id)
+                        }
+                      }}
                     >
+                      <span
+                        className="resize-handle top"
+                        onPointerDown={(event) => beginDrag(event, block, 'resize-start')}
+                      />
                       {compact ? (
                         <Text size="8px" fw={700} className="timeline-compact">
                           {block.start} {block.title}
@@ -311,6 +484,10 @@ function CalendarPlannerPage({ plan, onClearPlan, onRevertPlan, canRevert }) {
                           )}
                         </>
                       )}
+                      <span
+                        className="resize-handle bottom"
+                        onPointerDown={(event) => beginDrag(event, block, 'resize-end')}
+                      />
                     </div>
                   )
                 })}
@@ -323,8 +500,17 @@ function CalendarPlannerPage({ plan, onClearPlan, onRevertPlan, canRevert }) {
           <Group gap={6}><ThemeIcon size={17} color="green" variant="light"><CalendarCheck size={10} /></ThemeIcon><Text size="10px" c="dimmed">Schedule calibrated to focus capacity</Text></Group>
           <Group gap={6}><span className="legend-dot critical" /><Text size="10px" c="dimmed">Critical work</Text></Group>
           <Group gap={6}><span className="legend-dot buffer" /><Text size="10px" c="dimmed">Protected buffer</Text></Group>
+          <Text size="10px" c="dimmed">Click to edit · drag to move · drag edges to resize</Text>
         </Group>
       </Card>
+
+      <BlockEditorModal
+        key={editingId}
+        block={editingBlock}
+        onClose={() => setEditingId(null)}
+        onSave={updateBlock}
+        onDelete={deleteBlock}
+      />
     </div>
   )
 }
@@ -336,7 +522,8 @@ CalendarPlannerPage.propTypes = {
   }),
   onClearPlan: PropTypes.func.isRequired,
   onRevertPlan: PropTypes.func.isRequired,
-  canRevert: PropTypes.bool
+  canRevert: PropTypes.bool,
+  onUpdatePlan: PropTypes.func.isRequired
 }
 
 export default CalendarPlannerPage
